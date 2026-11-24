@@ -1,0 +1,55 @@
+trigger: none
+
+pr:
+  branches:
+    include:
+      - main
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+- task: UsePythonVersion@0
+  inputs:
+    versionSpec: '3.11'
+  displayName: Use Python 3.11
+
+- script: python -m pip install -r requirements.txt
+  displayName: Install dependencies
+
+# Developer / data scientist checks
+- script: python -m ruff check .
+  displayName: Lint code
+# - script: python -m black --check app tests
+#   displayName: Check formatting
+
+# Shared checks
+- script: python -m pytest --cov=app --cov-fail-under=70
+  displayName: Run unit tests and check coverage
+- script: python -m pip_audit -r requirements.txt
+  displayName: Audit Python dependencies
+
+# Platform / DevOps / MLOps checks
+- script: docker build -t calculator-app .
+  displayName: Build Docker image
+- script: |
+    set -o pipefail
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  displayName: Install Helm
+- script: helm lint calculator-chart/
+  displayName: Validate Helm chart
+- script: |
+    set -euo pipefail
+    cd "$(Agent.TempDirectory)"
+    curl -fsSLo terraform.zip https://releases.hashicorp.com/terraform/1.10.5/terraform_1.10.5_linux_amd64.zip
+    echo "0566a24f5332098b15716ebc394be503f4094acba5ba529bf5eb0698ed5e2a90  terraform.zip" | sha256sum -c -
+    mkdir -p terraform-bin
+    unzip -o terraform.zip -d terraform-bin
+    echo "##vso[task.prependpath]$(Agent.TempDirectory)/terraform-bin"
+  displayName: Install Terraform
+- script: |
+    set -e
+    terraform -chdir=terraform fmt -check -recursive
+    terraform -chdir=terraform init -backend=false -input=false
+    terraform -chdir=terraform validate
+  displayName: Validate Terraform configuration
